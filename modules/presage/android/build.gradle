@@ -9,6 +9,9 @@ version = '0.1.0'
 android {
   namespace "expo.modules.presage"
 
+  compileSdk 36
+  compileSdkMinor 1
+
   defaultConfig {
     versionCode 1
     versionName "0.1.0"
@@ -20,5 +23,6 @@ android {
 }
 
 dependencies {
-  implementation("com.presagetech:smartspectra:+")
+  implementation("com.presagetech:smartspectra:3.3.0")
+compileOnly("androidx.lifecycle:lifecycle-livedata-core:2.10.0")
 }

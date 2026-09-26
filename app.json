@@ -27,7 +27,7 @@
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": true
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -41,7 +41,7 @@
         {
           "android": {
             "minSdkVersion": 28,
-            "compileSdkVersion": 37,
+            "compileSdkVersion": 36,
             "targetSdkVersion": 36,
             "kotlinVersion": "2.2.21"
           }

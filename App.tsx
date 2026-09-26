@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import {
   Animated,
+  PermissionsAndroid,
   SafeAreaView,
   StatusBar,
   StyleSheet,
@@ -8,6 +9,7 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import Presage from "./modules/presage/src/PresageModule";
 
 type Mode = "idle" | "scanning" | "recovery";
 
@@ -17,20 +19,59 @@ export default function App() {
   const [pulse, setPulse] = useState(72);
   const [breathing, setBreathing] = useState(14);
 
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [scanStartedAt, setScanStartedAt] = useState<number | null>(null);
+
   const breathingScale = useRef(new Animated.Value(1)).current;
   const breathingOpacity = useRef(new Animated.Value(0.65)).current;
 
+  // Chrono du scan
+  useEffect(() => {
+    if (mode !== "scanning" || scanStartedAt === null) {
+      return;
+    }
+
+    const updateTimer = () => {
+      const seconds = Math.floor(
+        (Date.now() - scanStartedAt) / 1000
+      );
+
+      setElapsedSeconds(seconds);
+    };
+
+    updateTimer();
+
+    const timer = setInterval(updateTimer, 1000);
+
+    return () => clearInterval(timer);
+  }, [mode, scanStartedAt]);
+
+  // Lecture des vraies métriques Presage
   useEffect(() => {
     if (mode !== "scanning") return;
 
     const interval = setInterval(() => {
-      setPulse(76 + Math.floor(Math.random() * 8));
-      setBreathing(16 + Math.floor(Math.random() * 4));
-    }, 1500);
+      try {
+        const vitals = Presage.getVitals();
+
+        console.log("Presage vitals:", vitals);
+
+        if (vitals.pulse !== null) {
+          setPulse(Math.round(vitals.pulse));
+        }
+
+        if (vitals.breathingRate !== null) {
+          setBreathing(Math.round(vitals.breathingRate));
+        }
+      } catch (error) {
+        console.error("Vitals error:", error);
+      }
+    }, 1000);
 
     return () => clearInterval(interval);
   }, [mode]);
 
+  // Animation de respiration
   useEffect(() => {
     if (mode !== "recovery") {
       breathingScale.stopAnimation();
@@ -76,20 +117,124 @@ export default function App() {
     return () => animation.stop();
   }, [mode, breathingScale, breathingOpacity]);
 
-  const startScan = () => {
-    setMode("scanning");
-    setPulse(81);
-    setBreathing(18);
+  const formatTime = (seconds: number) => {
+    const minutes = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+
+    return `${String(minutes).padStart(2, "0")}:${String(secs).padStart(
+      2,
+      "0"
+    )}`;
   };
 
-  const startRecovery = () => {
+  const getScanMessage = () => {
+    if (elapsedSeconds < 12) {
+      return "Calibrating pulse...";
+    }
+
+    if (elapsedSeconds < 30) {
+      return "Pulse window ready • calibrating breathing...";
+    }
+
+    return "Measurement window ready";
+  };
+
+  const startScan = async () => {
+    // Le chrono commence dès le clic
+    setScanStartedAt(Date.now());
+    setElapsedSeconds(0);
+
+    try {
+      const permission = await PermissionsAndroid.request(
+        PermissionsAndroid.PERMISSIONS.CAMERA
+      );
+
+      if (permission !== PermissionsAndroid.RESULTS.GRANTED) {
+        setScanStartedAt(null);
+        alert("Camera permission is required.");
+        return;
+      }
+
+      const apiKey = process.env.EXPO_PUBLIC_PRESAGE_API_KEY;
+
+      if (!apiKey) {
+        setScanStartedAt(null);
+        alert("Presage API key is missing.");
+        return;
+      }
+
+      Presage.configure(apiKey);
+
+      setPulse(0);
+      setBreathing(0);
+      setMode("scanning");
+
+      const status = Presage.getStatus();
+
+      console.log("Presage status before start:", status);
+
+      if (status === "RUNNING" || status === "STARTING") {
+        console.log("Presage is already running");
+        return;
+      }
+
+      if (status === "STOPPING") {
+        console.log("Presage is currently stopping");
+        return;
+      }
+
+      await Presage.start();
+
+      console.log("Presage started");
+    } catch (error) {
+      console.error("Presage error:", error);
+      alert(`Presage error: ${String(error)}`);
+    }
+  };
+
+  const startRecovery = async () => {
+  try {
+    const status = Presage.getStatus();
+
+    console.log("Presage status before recovery:", status);
+
+    if (status === "STARTING") {
+      alert("Measurement is still starting. Please wait a few seconds.");
+      return;
+    }
+
+    if (status === "STOPPING") {
+      alert("Measurement is stopping. Please wait a moment.");
+      return;
+    }
+
+    if (status === "RUNNING") {
+      await Presage.stop();
+    }
+
     setMode("recovery");
-  };
+  } catch (error) {
+    console.log("Presage stop before recovery:", error);
+  }
+};
 
-  const reset = () => {
+  const reset = async () => {
+    try {
+      const status = Presage.getStatus();
+
+      if (status === "RUNNING" || status === "STARTING") {
+        await Presage.stop();
+      }
+    } catch (error) {
+      console.log("Presage stop:", error);
+    }
+
     setMode("idle");
     setPulse(72);
     setBreathing(14);
+
+    setElapsedSeconds(0);
+    setScanStartedAt(null);
   };
 
   return (
@@ -150,17 +295,28 @@ export default function App() {
               </Text>
 
               <Text style={styles.scanDescription}>
-                Simulated measurements for the prototype.
+                Real-time physiological measurements.
               </Text>
             </View>
 
             <View style={styles.cameraPlaceholder}>
+              <View style={styles.scanTimerContainer}>
+                <Text style={styles.scanTimer}>
+                  {formatTime(elapsedSeconds)}
+                </Text>
+
+                <Text style={styles.scanTimerHint}>
+                  {getScanMessage()}
+                </Text>
+              </View>
+
               <View style={styles.faceGuide}>
                 <Text style={styles.faceIcon}>☺</Text>
               </View>
 
               <View style={styles.scanningBadge}>
                 <View style={styles.smallDot} />
+
                 <Text style={styles.scanningText}>
                   SIGNAL ACTIVE
                 </Text>
@@ -169,11 +325,13 @@ export default function App() {
 
             <View style={styles.metricsRow}>
               <View style={styles.metricCard}>
-                <Text style={styles.metricLabel}>PULSE</Text>
+                <Text style={styles.metricLabel}>
+                  PULSE
+                </Text>
 
                 <View style={styles.metricValueRow}>
                   <Text style={styles.metricValue}>
-                    {pulse}
+                    {pulse > 0 ? pulse : "--"}
                   </Text>
 
                   <Text style={styles.metricUnit}>
@@ -182,7 +340,11 @@ export default function App() {
                 </View>
 
                 <Text style={styles.metricStatus}>
-                  ↑ above baseline
+                  {elapsedSeconds < 12
+                    ? "calibrating..."
+                    : pulse > 0
+                    ? "signal captured"
+                    : "waiting for signal"}
                 </Text>
               </View>
 
@@ -193,7 +355,7 @@ export default function App() {
 
                 <View style={styles.metricValueRow}>
                   <Text style={styles.metricValue}>
-                    {breathing}
+                    {breathing > 0 ? breathing : "--"}
                   </Text>
 
                   <Text style={styles.metricUnit}>
@@ -202,7 +364,11 @@ export default function App() {
                 </View>
 
                 <Text style={styles.metricStatus}>
-                  ↑ elevated
+                  {elapsedSeconds < 30
+                    ? "calibrating..."
+                    : breathing > 0
+                    ? "signal captured"
+                    : "waiting for signal"}
                 </Text>
               </View>
             </View>
@@ -212,14 +378,29 @@ export default function App() {
                 CALMID INSIGHT
               </Text>
 
-              <Text style={styles.insightTitle}>
-                Your activation appears elevated.
-              </Text>
+              {elapsedSeconds < 30 ? (
+                <>
+                  <Text style={styles.insightTitle}>
+                    Building a reliable reading.
+                  </Text>
 
-              <Text style={styles.insightText}>
-                A short breathing session may help you return closer
-                to your baseline.
-              </Text>
+                  <Text style={styles.insightText}>
+                    Stay still and keep your face and upper chest
+                    visible while CalmID collects your signals.
+                  </Text>
+                </>
+              ) : (
+                <>
+                  <Text style={styles.insightTitle}>
+                    Measurement window complete.
+                  </Text>
+
+                  <Text style={styles.insightText}>
+                    CalmID can now use the available signals to guide
+                    your breathing session.
+                  </Text>
+                </>
+              )}
             </View>
 
             <TouchableOpacity
@@ -276,8 +457,9 @@ export default function App() {
                 <Text style={styles.smallLabel}>
                   BEFORE
                 </Text>
+
                 <Text style={styles.statValue}>
-                  {pulse} BPM
+                  {pulse > 0 ? pulse : "--"} BPM
                 </Text>
               </View>
 
@@ -287,6 +469,7 @@ export default function App() {
                 <Text style={styles.smallLabel}>
                   TARGET
                 </Text>
+
                 <Text style={styles.statValue}>
                   ~72 BPM
                 </Text>
@@ -444,6 +627,27 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
     marginBottom: 18,
+  },
+
+  scanTimerContainer: {
+    position: "absolute",
+    top: 12,
+    left: 12,
+    right: 12,
+    alignItems: "center",
+  },
+
+  scanTimer: {
+    color: "#ffffff",
+    fontSize: 24,
+    fontWeight: "800",
+  },
+
+  scanTimerHint: {
+    color: "#9da9bd",
+    fontSize: 11,
+    marginTop: 2,
+    textAlign: "center",
   },
 
   faceGuide: {

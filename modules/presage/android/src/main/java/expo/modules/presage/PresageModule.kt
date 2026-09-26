@@ -25,12 +25,12 @@ class PresageModule : Module() {
       true
     }
 
-    AsyncFunction("start") Coroutine {
+    AsyncFunction("start") Coroutine { ->
       sdk.start()
       true
     }
 
-    AsyncFunction("stop") Coroutine {
+    AsyncFunction("stop") Coroutine { ->
       sdk.stop()
       true
     }
