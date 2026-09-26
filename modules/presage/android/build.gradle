@@ -8,11 +8,17 @@ version = '0.1.0'
 
 android {
   namespace "expo.modules.presage"
+
   defaultConfig {
     versionCode 1
     versionName "0.1.0"
   }
+
   lintOptions {
     abortOnError false
   }
+}
+
+dependencies {
+  implementation("com.presagetech:smartspectra:+")
 }
