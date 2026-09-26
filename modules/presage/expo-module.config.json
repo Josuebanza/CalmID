@@ -1,0 +1,9 @@
+{
+  "platforms": ["apple", "android", "web"],
+  "apple": {
+    "modules": ["PresageModule"]
+  },
+  "android": {
+    "modules": ["expo.modules.presage.PresageModule"]
+  }
+}
