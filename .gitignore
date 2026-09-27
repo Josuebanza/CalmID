@@ -44,3 +44,13 @@ yarn-error.*
 .env
 .env.*
 !.env.example
+
+# Local IDE
+.vscode/
+
+# Gradle local cache
+**/.gradle/
+
+# Environment variables
+.env
+.env.local

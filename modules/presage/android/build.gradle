@@ -24,5 +24,6 @@ android {
 
 dependencies {
   implementation("com.presagetech:smartspectra:3.3.0")
-compileOnly("androidx.lifecycle:lifecycle-livedata-core:2.10.0")
+  compileOnly("androidx.lifecycle:lifecycle-livedata-core:2.10.0")
+  implementation("androidx.camera:camera-view:1.6.0")
 }
