@@ -15,6 +15,16 @@ import type {
   ViewProps,
 } from "react-native";
 
+export type PresagePreviewDiagnostics = {
+  attached: boolean;
+  width: number;
+  height: number;
+  previewWidth: number;
+  previewHeight: number;
+  streamState: string;
+  sdkStatus: string;
+};
+
 export type PresageVitals = {
   pulse: number | null;
   breathingRate: number | null;
@@ -37,6 +47,8 @@ declare class PresageModule
   stop(): Promise<boolean>;
 
   getStatus(): string;
+
+  getPreviewDiagnostics(): PresagePreviewDiagnostics;
 
   getVitals(): PresageVitals;
 }
