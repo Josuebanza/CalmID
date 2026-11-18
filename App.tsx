@@ -1,7 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import {
   Animated,
-  ImageBackground,
   LogBox,
   PermissionsAndroid,
   Platform,
@@ -169,7 +168,6 @@ function CalmIDApp() {
   const [scanStartedAt, setScanStartedAt] = useState<number | null>(null);
 
   const [mirrorReady, setMirrorReady] = useState(false);
-  const [mirrorShotUri, setMirrorShotUri] = useState<string | null>(null);
 
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
   const cameraRef = useRef<any>(null);
@@ -677,7 +675,6 @@ function CalmIDApp() {
       }
 
       setMirrorReady(false);
-      setMirrorShotUri(null);
       setPulse(null);
       setBreathing(null);
       setValidationCode(null);
@@ -690,36 +687,16 @@ function CalmIDApp() {
   };
 
   // --------------------------------------------------
-  // FREEZE MIRROR + HAND CAMERA TO PRESAGE
+  // SWITCH TO PRESAGE: do not take a still photo.
+  // Expo Camera unmounts when mode becomes "scanning".
+  // The scanning view must display actual native frames or black, not a
+  // misleading frozen mirror image. This isolates CameraX preview failures.
   // --------------------------------------------------
 
-  const beginAnalysis = async () => {
-    try {
-      let uri: string | null = null;
-
-      if (cameraRef.current && mirrorReady) {
-        try {
-          const photo = await cameraRef.current.takePictureAsync({
-            quality: 0.45,
-            skipProcessing: false,
-          });
-
-          uri = photo?.uri ?? null;
-        } catch (error) {
-          console.log("Mirror snapshot skipped:", error);
-        }
-      }
-
-      setMirrorShotUri(uri);
-      setElapsedSeconds(0);
-      setScanStartedAt(Date.now());
-
-      // Unmounts CameraView immediately.
-      setMode("scanning");
-    } catch (error) {
-      console.error("Begin analysis error:", error);
-      setMode("scanning");
-    }
+  const beginAnalysis = () => {
+    setElapsedSeconds(0);
+    setScanStartedAt(Date.now());
+    setMode("scanning");
   };
 
   // --------------------------------------------------
@@ -853,7 +830,6 @@ function CalmIDApp() {
     setValidationHint("Stay still and face the camera.");
     setElapsedSeconds(0);
     setScanStartedAt(null);
-    setMirrorShotUri(null);
     setVoiceError(null);
   };
 
@@ -1047,13 +1023,9 @@ function CalmIDApp() {
       <View style={styles.fullScreen}>
         <StatusBar barStyle="light-content" translucent />
 
-        <ImageBackground
-          source={mirrorShotUri ? { uri: mirrorShotUri } : undefined}
-          style={styles.analysisBackdrop}
-          imageStyle={styles.analysisImage}
-        >
-          {/* CameraX preview from the same Presage session that measures vitals.
-              The underlying snapshot is just a fallback while the native view mounts. */}
+        <View style={styles.analysisBackdrop}>
+          {/* Native Presage preview only. The original frozen photo was
+              deliberately removed to reveal whether CameraX produces frames. */}
           <PresageCameraView
             style={StyleSheet.absoluteFillObject}
             pointerEvents="none"
@@ -1187,7 +1159,7 @@ function CalmIDApp() {
               compact
             />
           </View>
-        </ImageBackground>
+        </View>
       </View>
     );
   }
@@ -1826,11 +1798,6 @@ const styles = StyleSheet.create({
   analysisBackdrop: {
     flex: 1,
     backgroundColor: "#081321",
-  },
-
-  analysisImage: {
-    opacity: 0.64,
-    resizeMode: "cover",
   },
 
   analysisShade: {
