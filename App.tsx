@@ -17,7 +17,10 @@ import {
   useConversation,
 } from "@elevenlabs/react-native";
 
-import Presage, { PresageCameraView } from "./modules/presage/src/PresageModule";
+import Presage, {
+  PresageCameraView,
+  type PresagePreviewDiagnostics,
+} from "./modules/presage/src/PresageModule";
 
 type Mode = "idle" | "framing" | "scanning" | "recovery";
 type BreathPhase = "INHALE" | "HOLD" | "EXHALE";
@@ -168,6 +171,8 @@ function CalmIDApp() {
   const [scanStartedAt, setScanStartedAt] = useState<number | null>(null);
 
   const [mirrorReady, setMirrorReady] = useState(false);
+  const [previewDiagnostics, setPreviewDiagnostics] =
+    useState<PresagePreviewDiagnostics | null>(null);
 
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
   const cameraRef = useRef<any>(null);
@@ -439,6 +444,24 @@ function CalmIDApp() {
   }, [mode]);
 
   // --------------------------------------------------
+  // Temporary native preview diagnostics for development builds.
+  useEffect(() => {
+    if (mode !== "scanning" || !__DEV__) {
+      setPreviewDiagnostics(null);
+      return;
+    }
+    const update = () => {
+      try {
+        setPreviewDiagnostics(Presage.getPreviewDiagnostics());
+      } catch (error) {
+        console.log("Preview diagnostics unavailable:", error);
+      }
+    };
+    update();
+    const interval = setInterval(update, 950);
+    return () => clearInterval(interval);
+  }, [mode]);
+
   // BREATHING PHASE CLOCK: 4 / 1 / 6
   // --------------------------------------------------
 
@@ -1031,6 +1054,14 @@ function CalmIDApp() {
             pointerEvents="none"
           />
           <View style={styles.analysisShade} />
+
+          {__DEV__ && previewDiagnostics ? (
+            <View pointerEvents="none" style={styles.nativeDebugBadge}>
+              <Text style={styles.nativeDebugText}>
+                {`CameraX ${previewDiagnostics.streamState} · ${previewDiagnostics.previewWidth}×${previewDiagnostics.previewHeight} · ${previewDiagnostics.sdkStatus}`}
+              </Text>
+            </View>
+          ) : null}
 
           <View style={styles.callTopBar}>
             <View>
@@ -1794,6 +1825,24 @@ const styles = StyleSheet.create({
   },
 
   // SCANNING
+
+  nativeDebugBadge: {
+    position: "absolute",
+    top: STATUS_TOP + 82,
+    alignSelf: "center",
+    backgroundColor: "rgba(15, 15, 45, 0.86)",
+    borderColor: "rgba(129, 137, 255, 0.6)",
+    borderWidth: 1,
+    borderRadius: 9,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    zIndex: 20,
+  },
+  nativeDebugText: {
+    color: "#d6ddff",
+    fontSize: 10,
+    fontWeight: "700",
+  },
 
   analysisBackdrop: {
     flex: 1,
