@@ -18,7 +18,7 @@ import {
   useConversation,
 } from "@elevenlabs/react-native";
 
-import Presage from "./modules/presage/src/PresageModule";
+import Presage, { PresageCameraView } from "./modules/presage/src/PresageModule";
 
 type Mode = "idle" | "framing" | "scanning" | "recovery";
 type BreathPhase = "INHALE" | "HOLD" | "EXHALE";
@@ -1052,6 +1052,12 @@ function CalmIDApp() {
           style={styles.analysisBackdrop}
           imageStyle={styles.analysisImage}
         >
+          {/* CameraX preview from the same Presage session that measures vitals.
+              The underlying snapshot is just a fallback while the native view mounts. */}
+          <PresageCameraView
+            style={StyleSheet.absoluteFillObject}
+            pointerEvents="none"
+          />
           <View style={styles.analysisShade} />
 
           <View style={styles.callTopBar}>
