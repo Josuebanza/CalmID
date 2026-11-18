@@ -3,6 +3,9 @@ package expo.modules.presage
 import android.content.Context
 import android.graphics.Color
 import androidx.camera.view.PreviewView
+import androidx.lifecycle.Observer
+import java.lang.ref.WeakReference
+import android.util.Log
 import com.presagetech.smartspectra.CameraPosition
 import com.presagetech.smartspectra.SmartSpectraConfig
 import com.presagetech.smartspectra.SmartSpectraSdk
@@ -26,7 +29,31 @@ class PresageCameraView(
   appContext: AppContext
 ) : ExpoView(context, appContext) {
 
+  // Expo SDK 57 native subviews need Android layout enabled for CameraX.
+  override val shouldUseAndroidLayout: Boolean = true
+
+  companion object {
+    private const val TAG = "CalmIDPresagePreview"
+    var activeView: WeakReference<PresageCameraView>? = null
+  }
+
   private val sdk get() = SmartSpectraSdk.shared
+  private var streamState = "UNAVAILABLE"
+
+  private val streamObserver = Observer<PreviewView.StreamState> { state ->
+    streamState = state?.name ?: "UNKNOWN"
+    Log.i(TAG, "CameraX stream: $streamState, size=${previewView.width}x${previewView.height}")
+  }
+
+  fun diagnostics(): Map<String, Any?> = mapOf(
+    "attached" to isAttachedToWindow,
+    "width" to width,
+    "height" to height,
+    "previewWidth" to previewView.width,
+    "previewHeight" to previewView.height,
+    "streamState" to streamState,
+    "sdkStatus" to (sdk.processingStatus.value?.name ?: "UNKNOWN")
+  )
 
   private val previewView = PreviewView(context).apply {
     implementationMode = PreviewView.ImplementationMode.COMPATIBLE
@@ -44,14 +71,18 @@ class PresageCameraView(
 
   override fun onAttachedToWindow() {
     super.onAttachedToWindow()
-    // Recommended by Presage's official Android CameraX quickstart.
+    activeView = WeakReference(this)
+    previewView.previewStreamState.observeForever(streamObserver)
     sdk.config.previewSurfaceProvider = previewView.surfaceProvider
+    Log.i(TAG, "Native preview attached; Android layout enabled")
+    post { if (isAttachedToWindow) requestLayout() }
   }
 
   override fun onDetachedFromWindow() {
-    // React Native waits for Presage.stop() before unmounting on the regular
-    // recovery path. The next view mount re-binds its own surface provider.
+    previewView.previewStreamState.removeObserver(streamObserver)
+    if (activeView?.get() === this) activeView = null
     sdk.config.previewSurfaceProvider = null
+    Log.i(TAG, "Native preview detached")
     super.onDetachedFromWindow()
   }
 }
@@ -89,6 +120,18 @@ class PresageModule : Module() {
 
     Function("getStatus") {
       sdk.processingStatus.value?.name ?: "UNKNOWN"
+    }
+
+    Function("getPreviewDiagnostics") {
+      PresageCameraView.activeView?.get()?.diagnostics() ?: mapOf(
+        "attached" to false,
+        "width" to 0,
+        "height" to 0,
+        "previewWidth" to 0,
+        "previewHeight" to 0,
+        "streamState" to "NO_NATIVE_VIEW",
+        "sdkStatus" to (sdk.processingStatus.value?.name ?: "UNKNOWN")
+      )
     }
 
     Function("getVitals") {
