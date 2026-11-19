@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import {
   Animated,
   LogBox,
+  useWindowDimensions,
   PermissionsAndroid,
   Platform,
   StatusBar,
@@ -151,6 +152,10 @@ export default function App() {
 }
 
 function CalmIDApp() {
+  // Explicit viewport dimensions are important for this exported native view:
+  // position:absolute with all edges set resolved to a 0px-high PreviewView
+  // on the Pixel even though the surrounding scan screen filled the window.
+  const { width: previewScreenWidth, height: previewScreenHeight } = useWindowDimensions();
   const [mode, setMode] = useState<Mode>("idle");
   const [sessionKind, setSessionKind] =
     useState<SessionKind>("scan");
@@ -1050,7 +1055,14 @@ function CalmIDApp() {
           {/* Native Presage preview only. The original frozen photo was
               deliberately removed to reveal whether CameraX produces frames. */}
           <PresageCameraView
-            style={StyleSheet.absoluteFillObject}
+            style={{
+              position: "absolute",
+              left: 0,
+              top: 0,
+              width: previewScreenWidth,
+              height: previewScreenHeight,
+              backgroundColor: "#000",
+            }}
             pointerEvents="none"
           />
           <View style={styles.analysisShade} />
@@ -1058,7 +1070,7 @@ function CalmIDApp() {
           {__DEV__ && previewDiagnostics ? (
             <View pointerEvents="none" style={styles.nativeDebugBadge}>
               <Text style={styles.nativeDebugText}>
-                {`CameraX ${previewDiagnostics.streamState} · ${previewDiagnostics.previewWidth}×${previewDiagnostics.previewHeight} · ${previewDiagnostics.sdkStatus}`}
+                {`CameraX ${previewDiagnostics.streamState} · view ${previewDiagnostics.width}×${previewDiagnostics.height} · preview ${previewDiagnostics.previewWidth}×${previewDiagnostics.previewHeight} · ${previewDiagnostics.sdkStatus}`}
               </Text>
             </View>
           ) : null}
