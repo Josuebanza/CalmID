@@ -549,7 +549,14 @@ function CalmIDApp() {
   }, [mode, breathingScale, breathingOpacity]);
 
   // --------------------------------------------------
-  // LOCAL TTS FALLBACK
+  // Automatically attempt ElevenLabs when the breathing screen opens.
+  // While connecting, stay silent; TTS starts only if ElevenLabs fails.
+  useEffect(() => {
+    if (mode !== "recovery" || voiceMode !== "idle") return;
+    void startVoiceCoach();
+  }, [mode, voiceMode, ttsLanguage]);
+
+  // LOCAL TTS FALLBACK — only after the AI connection fails
   // --------------------------------------------------
 
   useEffect(() => {
@@ -637,33 +644,23 @@ function CalmIDApp() {
     !validationCode || validationCode === "OK";
 
   const getVoiceLabel = () => {
-    if (voiceMode === "local") {
-      return ttsLanguage === "fr"
-        ? "Guide local • Français"
-        : "Local guide • English";
+    if (voiceMode === "idle" || voiceMode === "connecting") {
+      return "Connecting ElevenLabs...";
     }
 
-    if (conversation.status === "connecting") {
-      return "Connecting live coach...";
+    if (voiceMode === "local") {
+      return ttsLanguage === "fr"
+        ? "Guide TTS de secours • Français"
+        : "Backup TTS guide • English";
     }
 
     if (conversation.status === "connected") {
-      if (conversation.isSpeaking) {
-        return "Live coach is speaking";
-      }
-
-      if (conversation.isListening) {
-        return "Live coach is listening";
-      }
-
-      return "Live coach connected";
+      if (conversation.isSpeaking) return "ElevenLabs is speaking";
+      if (conversation.isListening) return "ElevenLabs is listening";
+      return "ElevenLabs connected";
     }
 
-    if (voiceError) {
-      return "Live coach unavailable • local guide active";
-    }
-
-    return "Local TTS breathing guide";
+    return "ElevenLabs voice coach";
   };
 
   const changeGuidanceLanguage = async (
@@ -673,6 +670,9 @@ function CalmIDApp() {
       return;
     }
 
+    // Switching language ends the old agent intentionally, then reconnects.
+    intentionalDisconnectRef.current = true;
+    voiceWantedRef.current = false;
     Speech.stop();
 
     try {
@@ -683,14 +683,14 @@ function CalmIDApp() {
         await conversation.endSession();
       }
     } catch (error) {
-      // Some LiveKit builds report a ConnectionError while the room is
-      // already closing. The next session can still start normally.
       console.log("Voice language switch disconnect:", error);
     }
 
     setVoiceError(null);
-    setVoiceMode("local");
     setTtsLanguage(nextLanguage);
+    setVoiceMode("idle");
+    voiceWantedRef.current = true;
+    intentionalDisconnectRef.current = false;
   };
 
   // --------------------------------------------------
@@ -738,57 +738,69 @@ function CalmIDApp() {
   // --------------------------------------------------
 
   const startVoiceCoach = async () => {
-    const agentId =
-      process.env.EXPO_PUBLIC_ELEVENLABS_AGENT_ID;
+    if (voiceStartingRef.current) return;
+    voiceWantedRef.current = true;
 
-    setVoiceMode("elevenlabs");
+    if (conversation.status === "connected") {
+      setVoiceMode("elevenlabs");
+      return;
+    }
+    if (conversation.status === "connecting") {
+      setVoiceMode("connecting");
+      return;
+    }
+
+    voiceStartingRef.current = true;
+    setVoiceMode("connecting");
+    setVoiceError(null);
+    Speech.stop();
+
+    const agentId = process.env.EXPO_PUBLIC_ELEVENLABS_AGENT_ID;
 
     if (!agentId) {
       setVoiceError("Missing ElevenLabs Agent ID");
       setVoiceMode("local");
-      return;
-    }
-
-    if (
-      conversation.status === "connected" ||
-      conversation.status === "connecting"
-    ) {
+      voiceStartingRef.current = false;
       return;
     }
 
     try {
-      setVoiceError(null);
-      Speech.stop();
+      if (Platform.OS === "android") {
+        const granted = await PermissionsAndroid.request(
+          PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
+          {
+            title: "Microphone permission",
+            message: "CalmID needs microphone access for the live voice coach.",
+            buttonPositive: "Allow",
+            buttonNegative: "Cancel",
+          }
+        );
 
-      const granted = await PermissionsAndroid.request(
-        PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
-        {
-          title: "Microphone permission",
-          message:
-            "CalmID needs microphone access for the breathing coach.",
-          buttonPositive: "Allow",
-          buttonNegative: "Cancel",
+        if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
+          throw new Error("Microphone permission denied");
         }
-      );
-
-      if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
-        setVoiceError("Microphone permission denied");
-        return;
       }
 
+      if (!voiceWantedRef.current) return;
       console.log("Starting ElevenLabs agent:", agentId);
-
-      await conversation.startSession({
-        agentId,
-      });
-
-      // Do not depend on the return value. The reactive status + callbacks
-      // tell us whether the session actually connected.
+      await conversation.startSession({ agentId });
       console.log("ElevenLabs startSession resolved");
+
+      if (!voiceWantedRef.current) {
+        try {
+          await conversation.endSession();
+        } catch (error) {
+          console.log("Late session cleanup:", error);
+        }
+      }
     } catch (error) {
       console.log("ElevenLabs start error:", error);
-      setVoiceError(String(error));
-      setVoiceMode("local");
+      if (voiceWantedRef.current && !intentionalDisconnectRef.current) {
+        setVoiceError(String(error));
+        setVoiceMode("local");
+      }
+    } finally {
+      voiceStartingRef.current = false;
     }
   };
 
