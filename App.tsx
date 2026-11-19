@@ -26,7 +26,7 @@ import Presage, {
 type Mode = "idle" | "framing" | "scanning" | "recovery";
 type BreathPhase = "INHALE" | "HOLD" | "EXHALE";
 type SessionKind = "scan" | "meditation";
-type VoiceMode = "local" | "elevenlabs";
+type VoiceMode = "idle" | "connecting" | "local" | "elevenlabs";
 type TtsLanguage = "fr" | "en";
 
 const STATUS_TOP =
@@ -159,10 +159,11 @@ function CalmIDApp() {
   const [mode, setMode] = useState<Mode>("idle");
   const [sessionKind, setSessionKind] =
     useState<SessionKind>("scan");
+  // ElevenLabs is the primary voice; local speech is fallback only.
   const [voiceMode, setVoiceMode] =
-    useState<VoiceMode>("local");
+    useState<VoiceMode>("idle");
   const [ttsLanguage, setTtsLanguage] =
-    useState<TtsLanguage>("fr");
+    useState<TtsLanguage>("en");
 
   const [pulse, setPulse] = useState<number | null>(null);
   const [breathing, setBreathing] = useState<number | null>(null);
@@ -192,6 +193,9 @@ function CalmIDApp() {
   const guidePulse = useRef(new Animated.Value(0.6)).current;
 
   const [voiceError, setVoiceError] = useState<string | null>(null);
+  const voiceWantedRef = useRef(false);
+  const voiceStartingRef = useRef(false);
+  const intentionalDisconnectRef = useRef(false);
 
   const conversation = useConversation({
     overrides: {
@@ -199,24 +203,26 @@ function CalmIDApp() {
         language: ttsLanguage === "fr" ? "fr" : "en",
         firstMessage:
           ttsLanguage === "fr"
-            ? "Bonjour. Laisse tes pensées passer et concentre-toi sur ta respiration. Je vais te guider."
-            : "Hi. Let your thoughts pass and focus on your breathing. I will guide you.",
+            ? "Salut, je suis CalmID. Je suis là pour t'accompagner un moment. Comment tu te sens maintenant ?"
+            : "Hi, I'm CalmID. I'm here to support you for a moment. How are you feeling right now?",
       },
     },
     onConnect: () => {
       console.log("ElevenLabs connected");
+      if (!voiceWantedRef.current) return;
       setVoiceError(null);
       setVoiceMode("elevenlabs");
       Speech.stop();
     },
     onDisconnect: () => {
       console.log("ElevenLabs disconnected");
+      if (!voiceWantedRef.current || intentionalDisconnectRef.current) return;
+      setVoiceError((previous) => previous ?? "ElevenLabs disconnected");
       setVoiceMode("local");
     },
     onError: (error) => {
-      // Keep cloud voice optional during the hackathon demo.
-      // A failed live-agent connection should never break meditation.
       console.log("ElevenLabs error:", error);
+      if (!voiceWantedRef.current || intentionalDisconnectRef.current) return;
       setVoiceError(String(error));
       setVoiceMode("local");
     },
