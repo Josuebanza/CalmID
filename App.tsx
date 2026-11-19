@@ -1,8 +1,8 @@
 import React, { useEffect, useRef, useState } from "react";
 import {
   Animated,
-  ImageBackground,
   LogBox,
+  useWindowDimensions,
   PermissionsAndroid,
   Platform,
   StatusBar,
@@ -18,12 +18,14 @@ import {
   useConversation,
 } from "@elevenlabs/react-native";
 
-import Presage from "./modules/presage/src/PresageModule";
+import Presage, {
+  PresageCameraView,
+} from "./modules/presage/src/PresageModule";
 
 type Mode = "idle" | "framing" | "scanning" | "recovery";
 type BreathPhase = "INHALE" | "HOLD" | "EXHALE";
 type SessionKind = "scan" | "meditation";
-type VoiceMode = "local" | "elevenlabs";
+type VoiceMode = "idle" | "connecting" | "local" | "elevenlabs";
 type TtsLanguage = "fr" | "en";
 
 const STATUS_TOP =
@@ -149,13 +151,18 @@ export default function App() {
 }
 
 function CalmIDApp() {
+  // Explicit viewport dimensions are important for this exported native view:
+  // position:absolute with all edges set resolved to a 0px-high PreviewView
+  // on the Pixel even though the surrounding scan screen filled the window.
+  const { width: previewScreenWidth, height: previewScreenHeight } = useWindowDimensions();
   const [mode, setMode] = useState<Mode>("idle");
   const [sessionKind, setSessionKind] =
     useState<SessionKind>("scan");
+  // ElevenLabs is the primary voice; local speech is fallback only.
   const [voiceMode, setVoiceMode] =
-    useState<VoiceMode>("local");
+    useState<VoiceMode>("idle");
   const [ttsLanguage, setTtsLanguage] =
-    useState<TtsLanguage>("fr");
+    useState<TtsLanguage>("en");
 
   const [pulse, setPulse] = useState<number | null>(null);
   const [breathing, setBreathing] = useState<number | null>(null);
@@ -169,7 +176,6 @@ function CalmIDApp() {
   const [scanStartedAt, setScanStartedAt] = useState<number | null>(null);
 
   const [mirrorReady, setMirrorReady] = useState(false);
-  const [mirrorShotUri, setMirrorShotUri] = useState<string | null>(null);
 
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
   const cameraRef = useRef<any>(null);
@@ -184,6 +190,9 @@ function CalmIDApp() {
   const guidePulse = useRef(new Animated.Value(0.6)).current;
 
   const [voiceError, setVoiceError] = useState<string | null>(null);
+  const voiceWantedRef = useRef(false);
+  const voiceStartingRef = useRef(false);
+  const intentionalDisconnectRef = useRef(false);
 
   const conversation = useConversation({
     overrides: {
@@ -191,24 +200,26 @@ function CalmIDApp() {
         language: ttsLanguage === "fr" ? "fr" : "en",
         firstMessage:
           ttsLanguage === "fr"
-            ? "Bonjour. Laisse tes pensées passer et concentre-toi sur ta respiration. Je vais te guider."
-            : "Hi. Let your thoughts pass and focus on your breathing. I will guide you.",
+            ? "Salut, je suis CalmID. Je suis là pour t'accompagner un moment. Comment tu te sens maintenant ?"
+            : "Hi, I'm CalmID. I'm here to support you for a moment. How are you feeling right now?",
       },
     },
     onConnect: () => {
       console.log("ElevenLabs connected");
+      if (!voiceWantedRef.current) return;
       setVoiceError(null);
       setVoiceMode("elevenlabs");
       Speech.stop();
     },
     onDisconnect: () => {
       console.log("ElevenLabs disconnected");
+      if (!voiceWantedRef.current || intentionalDisconnectRef.current) return;
+      setVoiceError((previous) => previous ?? "ElevenLabs disconnected");
       setVoiceMode("local");
     },
     onError: (error) => {
-      // Keep cloud voice optional during the hackathon demo.
-      // A failed live-agent connection should never break meditation.
       console.log("ElevenLabs error:", error);
+      if (!voiceWantedRef.current || intentionalDisconnectRef.current) return;
       setVoiceError(String(error));
       setVoiceMode("local");
     },
@@ -517,7 +528,14 @@ function CalmIDApp() {
   }, [mode, breathingScale, breathingOpacity]);
 
   // --------------------------------------------------
-  // LOCAL TTS FALLBACK
+  // Automatically attempt ElevenLabs when the breathing screen opens.
+  // While connecting, stay silent; TTS starts only if ElevenLabs fails.
+  useEffect(() => {
+    if (mode !== "recovery" || voiceMode !== "idle") return;
+    void startVoiceCoach();
+  }, [mode, voiceMode, ttsLanguage]);
+
+  // LOCAL TTS FALLBACK — only after the AI connection fails
   // --------------------------------------------------
 
   useEffect(() => {
@@ -605,33 +623,23 @@ function CalmIDApp() {
     !validationCode || validationCode === "OK";
 
   const getVoiceLabel = () => {
-    if (voiceMode === "local") {
-      return ttsLanguage === "fr"
-        ? "Guide local • Français"
-        : "Local guide • English";
+    if (voiceMode === "idle" || voiceMode === "connecting") {
+      return "Connecting ElevenLabs...";
     }
 
-    if (conversation.status === "connecting") {
-      return "Connecting live coach...";
+    if (voiceMode === "local") {
+      return ttsLanguage === "fr"
+        ? "Guide TTS de secours • Français"
+        : "Backup TTS guide • English";
     }
 
     if (conversation.status === "connected") {
-      if (conversation.isSpeaking) {
-        return "Live coach is speaking";
-      }
-
-      if (conversation.isListening) {
-        return "Live coach is listening";
-      }
-
-      return "Live coach connected";
+      if (conversation.isSpeaking) return "ElevenLabs is speaking";
+      if (conversation.isListening) return "ElevenLabs is listening";
+      return "ElevenLabs connected";
     }
 
-    if (voiceError) {
-      return "Live coach unavailable • local guide active";
-    }
-
-    return "Local TTS breathing guide";
+    return "ElevenLabs voice coach";
   };
 
   const changeGuidanceLanguage = async (
@@ -641,6 +649,9 @@ function CalmIDApp() {
       return;
     }
 
+    // Switching language ends the old agent intentionally, then reconnects.
+    intentionalDisconnectRef.current = true;
+    voiceWantedRef.current = false;
     Speech.stop();
 
     try {
@@ -651,14 +662,14 @@ function CalmIDApp() {
         await conversation.endSession();
       }
     } catch (error) {
-      // Some LiveKit builds report a ConnectionError while the room is
-      // already closing. The next session can still start normally.
       console.log("Voice language switch disconnect:", error);
     }
 
     setVoiceError(null);
-    setVoiceMode("local");
     setTtsLanguage(nextLanguage);
+    setVoiceMode("idle");
+    voiceWantedRef.current = true;
+    intentionalDisconnectRef.current = false;
   };
 
   // --------------------------------------------------
@@ -677,7 +688,6 @@ function CalmIDApp() {
       }
 
       setMirrorReady(false);
-      setMirrorShotUri(null);
       setPulse(null);
       setBreathing(null);
       setValidationCode(null);
@@ -690,36 +700,16 @@ function CalmIDApp() {
   };
 
   // --------------------------------------------------
-  // FREEZE MIRROR + HAND CAMERA TO PRESAGE
+  // SWITCH TO PRESAGE: do not take a still photo.
+  // Expo Camera unmounts when mode becomes "scanning".
+  // The scanning view must display actual native frames or black, not a
+  // misleading frozen mirror image. This isolates CameraX preview failures.
   // --------------------------------------------------
 
-  const beginAnalysis = async () => {
-    try {
-      let uri: string | null = null;
-
-      if (cameraRef.current && mirrorReady) {
-        try {
-          const photo = await cameraRef.current.takePictureAsync({
-            quality: 0.45,
-            skipProcessing: false,
-          });
-
-          uri = photo?.uri ?? null;
-        } catch (error) {
-          console.log("Mirror snapshot skipped:", error);
-        }
-      }
-
-      setMirrorShotUri(uri);
-      setElapsedSeconds(0);
-      setScanStartedAt(Date.now());
-
-      // Unmounts CameraView immediately.
-      setMode("scanning");
-    } catch (error) {
-      console.error("Begin analysis error:", error);
-      setMode("scanning");
-    }
+  const beginAnalysis = () => {
+    setElapsedSeconds(0);
+    setScanStartedAt(Date.now());
+    setMode("scanning");
   };
 
   // --------------------------------------------------
@@ -727,57 +717,69 @@ function CalmIDApp() {
   // --------------------------------------------------
 
   const startVoiceCoach = async () => {
-    const agentId =
-      process.env.EXPO_PUBLIC_ELEVENLABS_AGENT_ID;
+    if (voiceStartingRef.current) return;
+    voiceWantedRef.current = true;
 
-    setVoiceMode("elevenlabs");
+    if (conversation.status === "connected") {
+      setVoiceMode("elevenlabs");
+      return;
+    }
+    if (conversation.status === "connecting") {
+      setVoiceMode("connecting");
+      return;
+    }
+
+    voiceStartingRef.current = true;
+    setVoiceMode("connecting");
+    setVoiceError(null);
+    Speech.stop();
+
+    const agentId = process.env.EXPO_PUBLIC_ELEVENLABS_AGENT_ID;
 
     if (!agentId) {
       setVoiceError("Missing ElevenLabs Agent ID");
       setVoiceMode("local");
-      return;
-    }
-
-    if (
-      conversation.status === "connected" ||
-      conversation.status === "connecting"
-    ) {
+      voiceStartingRef.current = false;
       return;
     }
 
     try {
-      setVoiceError(null);
-      Speech.stop();
+      if (Platform.OS === "android") {
+        const granted = await PermissionsAndroid.request(
+          PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
+          {
+            title: "Microphone permission",
+            message: "CalmID needs microphone access for the live voice coach.",
+            buttonPositive: "Allow",
+            buttonNegative: "Cancel",
+          }
+        );
 
-      const granted = await PermissionsAndroid.request(
-        PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
-        {
-          title: "Microphone permission",
-          message:
-            "CalmID needs microphone access for the breathing coach.",
-          buttonPositive: "Allow",
-          buttonNegative: "Cancel",
+        if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
+          throw new Error("Microphone permission denied");
         }
-      );
-
-      if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
-        setVoiceError("Microphone permission denied");
-        return;
       }
 
+      if (!voiceWantedRef.current) return;
       console.log("Starting ElevenLabs agent:", agentId);
-
-      await conversation.startSession({
-        agentId,
-      });
-
-      // Do not depend on the return value. The reactive status + callbacks
-      // tell us whether the session actually connected.
+      await conversation.startSession({ agentId });
       console.log("ElevenLabs startSession resolved");
+
+      if (!voiceWantedRef.current) {
+        try {
+          await conversation.endSession();
+        } catch (error) {
+          console.log("Late session cleanup:", error);
+        }
+      }
     } catch (error) {
       console.log("ElevenLabs start error:", error);
-      setVoiceError(String(error));
-      setVoiceMode("local");
+      if (voiceWantedRef.current && !intentionalDisconnectRef.current) {
+        setVoiceError(String(error));
+        setVoiceMode("local");
+      }
+    } finally {
+      voiceStartingRef.current = false;
     }
   };
 
@@ -804,8 +806,10 @@ function CalmIDApp() {
     }
 
     // Scan path keeps the captured biometrics.
+    voiceWantedRef.current = true;
+    setVoiceError(null);
     setSessionKind("scan");
-    setVoiceMode("local");
+    setVoiceMode("idle");
     setMode("recovery");
   };
 
@@ -814,7 +818,8 @@ function CalmIDApp() {
     setSessionKind("meditation");
     setPulse(null);
     setBreathing(null);
-    setVoiceMode("local");
+    voiceWantedRef.current = true;
+    setVoiceMode("idle");
     setVoiceError(null);
     setMode("recovery");
   };
@@ -824,6 +829,8 @@ function CalmIDApp() {
   // --------------------------------------------------
 
   const reset = async () => {
+    voiceWantedRef.current = false;
+    intentionalDisconnectRef.current = true;
     Speech.stop();
 
     try {
@@ -846,15 +853,15 @@ function CalmIDApp() {
 
     setMode("idle");
     setSessionKind("scan");
-    setVoiceMode("local");
+    setVoiceMode("idle");
     setPulse(null);
     setBreathing(null);
     setValidationCode(null);
     setValidationHint("Stay still and face the camera.");
     setElapsedSeconds(0);
     setScanStartedAt(null);
-    setMirrorShotUri(null);
     setVoiceError(null);
+    intentionalDisconnectRef.current = false;
   };
 
   const familiarVoiceDemo = () => {
@@ -1047,11 +1054,20 @@ function CalmIDApp() {
       <View style={styles.fullScreen}>
         <StatusBar barStyle="light-content" translucent />
 
-        <ImageBackground
-          source={mirrorShotUri ? { uri: mirrorShotUri } : undefined}
-          style={styles.analysisBackdrop}
-          imageStyle={styles.analysisImage}
-        >
+        <View style={styles.analysisBackdrop}>
+          {/* Native Presage preview only. The original frozen photo was
+              deliberately removed to reveal whether CameraX produces frames. */}
+          <PresageCameraView
+            style={{
+              position: "absolute",
+              left: 0,
+              top: 0,
+              width: previewScreenWidth,
+              height: previewScreenHeight,
+              backgroundColor: "#000",
+            }}
+            pointerEvents="none"
+          />
           <View style={styles.analysisShade} />
 
           <View style={styles.callTopBar}>
@@ -1181,7 +1197,7 @@ function CalmIDApp() {
               compact
             />
           </View>
-        </ImageBackground>
+        </View>
       </View>
     );
   }
@@ -1441,23 +1457,15 @@ function CalmIDApp() {
               <View>
                 <Text style={styles.recoveryStatLabel}>GUIDE</Text>
                 <Text style={styles.recoveryStatValueSmall}>
-                  {ttsLanguage === "fr" ? "TTS FR" : "TTS EN"}
+                  {voiceMode === "elevenlabs"
+                    ? "ELEVENLABS"
+                    : voiceMode === "local"
+                    ? "LOCAL TTS"
+                    : "CONNECTING"}
                 </Text>
               </View>
             </View>
           )}
-
-          {voiceMode === "elevenlabs" &&
-          conversation.status === "disconnected" ? (
-            <TouchableOpacity
-              onPress={startVoiceCoach}
-              style={styles.retryVoice}
-            >
-              <Text style={styles.retryVoiceText}>
-                Retry ElevenLabs voice
-              </Text>
-            </TouchableOpacity>
-          ) : null}
 
           {voiceMode === "local" ? (
             <TouchableOpacity
@@ -1465,10 +1473,10 @@ function CalmIDApp() {
               style={styles.liveCoachOptional}
             >
               <Text style={styles.liveCoachOptionalTitle}>
-                Try ElevenLabs live coach
+                Retry ElevenLabs voice
               </Text>
               <Text style={styles.liveCoachOptionalSub}>
-                optional cloud voice • local guide keeps working if unavailable
+                AI voice first • local TTS available if connection fails
               </Text>
             </TouchableOpacity>
           ) : null}
@@ -1820,11 +1828,6 @@ const styles = StyleSheet.create({
   analysisBackdrop: {
     flex: 1,
     backgroundColor: "#081321",
-  },
-
-  analysisImage: {
-    opacity: 0.64,
-    resizeMode: "cover",
   },
 
   analysisShade: {

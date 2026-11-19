@@ -25,6 +25,7 @@ The project started from a personal experience: helping a loved one through a pa
 - **Biometric-assisted scan**
   - Front-camera framing flow
   - Presage SmartSpectra integration
+  - Live CameraX preview during physiological analysis (no frozen photo)
   - Live framing feedback such as centering, motion, and positioning guidance
   - Pulse and breathing-related signals when available
 
@@ -40,9 +41,10 @@ The project started from a personal experience: helping a loved one through a pa
   - No biometric metrics are shown when no scan was performed
 
 - **Voice guidance**
-  - Local TTS fallback
-  - French / English language toggle
-  - ElevenLabs live voice coach integration
+  - ElevenLabs conversational AI coach starts automatically when breathing begins
+  - English by default, with French / English language toggle
+  - Agent introduces itself and asks how the user is feeling
+  - Local device TTS fallback activates only if the ElevenLabs session fails or disconnects
 
 - **Familiar voice concept**
   - Prototype idea for future consent-based guidance using the voice of someone the user trusts
@@ -75,7 +77,7 @@ The camera experience uses a handoff model:
 1. Expo Camera acts as a front-facing mirror for framing.
 2. The mirror is released.
 3. Presage takes ownership of the camera for biometric processing.
-4. Live validation feedback and available metrics are surfaced in the React Native UI.
+4. A native CameraX PreviewView displays the *same* Presage camera stream live, underneath React Native validation and metric overlays.
 
 This avoids running two competing camera pipelines at the same time.
 
@@ -154,7 +156,8 @@ Start scan
 ```text
 Just breathe
 → guided 4-1-6 breathing
-→ local TTS or ElevenLabs voice
+→ ElevenLabs voice coach (English first, asks how the user feels)
+→ local TTS only if the AI voice is unavailable
 ```
 
 ## Hackathon Challenges
@@ -166,6 +169,7 @@ Some of the hardest parts of the project were:
 - handling Presage processing states,
 - coordinating camera ownership between Expo Camera and Presage,
 - stabilizing front-camera framing,
+- rendering the Presage camera feed through a correctly-sized Android CameraX PreviewView,
 - and making voice guidance resilient when network services fail.
 
 A major product lesson was that the breathing experience should remain useful even when biometrics or cloud voice services are unavailable.
@@ -190,7 +194,9 @@ We also learned that for a wellness experience, reliability and simplicity matte
 
 Current stable hackathon release: **v1.0.0-hackthehill**
 
-This release focuses on a reliable demo experience:
+The stable tag is preserved. Newer live-camera and AI-first voice improvements are being tested in a separate branch before being promoted to the next release.
+
+The stable release focuses on a reliable demo experience:
 - biometric scan flow,
 - meditation-only flow,
 - bilingual breathing guidance,
