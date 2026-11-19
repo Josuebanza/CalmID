@@ -20,7 +20,6 @@ import {
 
 import Presage, {
   PresageCameraView,
-  type PresagePreviewDiagnostics,
 } from "./modules/presage/src/PresageModule";
 
 type Mode = "idle" | "framing" | "scanning" | "recovery";
@@ -177,8 +176,6 @@ function CalmIDApp() {
   const [scanStartedAt, setScanStartedAt] = useState<number | null>(null);
 
   const [mirrorReady, setMirrorReady] = useState(false);
-  const [previewDiagnostics, setPreviewDiagnostics] =
-    useState<PresagePreviewDiagnostics | null>(null);
 
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
   const cameraRef = useRef<any>(null);
@@ -455,24 +452,6 @@ function CalmIDApp() {
   }, [mode]);
 
   // --------------------------------------------------
-  // Temporary native preview diagnostics for development builds.
-  useEffect(() => {
-    if (mode !== "scanning" || !__DEV__) {
-      setPreviewDiagnostics(null);
-      return;
-    }
-    const update = () => {
-      try {
-        setPreviewDiagnostics(Presage.getPreviewDiagnostics());
-      } catch (error) {
-        console.log("Preview diagnostics unavailable:", error);
-      }
-    };
-    update();
-    const interval = setInterval(update, 950);
-    return () => clearInterval(interval);
-  }, [mode]);
-
   // BREATHING PHASE CLOCK: 4 / 1 / 6
   // --------------------------------------------------
 
@@ -827,8 +806,10 @@ function CalmIDApp() {
     }
 
     // Scan path keeps the captured biometrics.
+    voiceWantedRef.current = true;
+    setVoiceError(null);
     setSessionKind("scan");
-    setVoiceMode("local");
+    setVoiceMode("idle");
     setMode("recovery");
   };
 
@@ -837,7 +818,8 @@ function CalmIDApp() {
     setSessionKind("meditation");
     setPulse(null);
     setBreathing(null);
-    setVoiceMode("local");
+    voiceWantedRef.current = true;
+    setVoiceMode("idle");
     setVoiceError(null);
     setMode("recovery");
   };
@@ -847,6 +829,8 @@ function CalmIDApp() {
   // --------------------------------------------------
 
   const reset = async () => {
+    voiceWantedRef.current = false;
+    intentionalDisconnectRef.current = true;
     Speech.stop();
 
     try {
@@ -869,7 +853,7 @@ function CalmIDApp() {
 
     setMode("idle");
     setSessionKind("scan");
-    setVoiceMode("local");
+    setVoiceMode("idle");
     setPulse(null);
     setBreathing(null);
     setValidationCode(null);
@@ -877,6 +861,7 @@ function CalmIDApp() {
     setElapsedSeconds(0);
     setScanStartedAt(null);
     setVoiceError(null);
+    intentionalDisconnectRef.current = false;
   };
 
   const familiarVoiceDemo = () => {
@@ -1084,14 +1069,6 @@ function CalmIDApp() {
             pointerEvents="none"
           />
           <View style={styles.analysisShade} />
-
-          {__DEV__ && previewDiagnostics ? (
-            <View pointerEvents="none" style={styles.nativeDebugBadge}>
-              <Text style={styles.nativeDebugText}>
-                {`CameraX ${previewDiagnostics.streamState} · view ${previewDiagnostics.width}×${previewDiagnostics.height} · preview ${previewDiagnostics.previewWidth}×${previewDiagnostics.previewHeight} · ${previewDiagnostics.sdkStatus}`}
-              </Text>
-            </View>
-          ) : null}
 
           <View style={styles.callTopBar}>
             <View>
@@ -1480,23 +1457,15 @@ function CalmIDApp() {
               <View>
                 <Text style={styles.recoveryStatLabel}>GUIDE</Text>
                 <Text style={styles.recoveryStatValueSmall}>
-                  {ttsLanguage === "fr" ? "TTS FR" : "TTS EN"}
+                  {voiceMode === "elevenlabs"
+                    ? "ELEVENLABS"
+                    : voiceMode === "local"
+                    ? "LOCAL TTS"
+                    : "CONNECTING"}
                 </Text>
               </View>
             </View>
           )}
-
-          {voiceMode === "elevenlabs" &&
-          conversation.status === "disconnected" ? (
-            <TouchableOpacity
-              onPress={startVoiceCoach}
-              style={styles.retryVoice}
-            >
-              <Text style={styles.retryVoiceText}>
-                Retry ElevenLabs voice
-              </Text>
-            </TouchableOpacity>
-          ) : null}
 
           {voiceMode === "local" ? (
             <TouchableOpacity
@@ -1504,10 +1473,10 @@ function CalmIDApp() {
               style={styles.liveCoachOptional}
             >
               <Text style={styles.liveCoachOptionalTitle}>
-                Try ElevenLabs live coach
+                Retry ElevenLabs voice
               </Text>
               <Text style={styles.liveCoachOptionalSub}>
-                optional cloud voice • local guide keeps working if unavailable
+                AI voice first • local TTS available if connection fails
               </Text>
             </TouchableOpacity>
           ) : null}
@@ -1855,24 +1824,6 @@ const styles = StyleSheet.create({
   },
 
   // SCANNING
-
-  nativeDebugBadge: {
-    position: "absolute",
-    top: STATUS_TOP + 82,
-    alignSelf: "center",
-    backgroundColor: "rgba(15, 15, 45, 0.86)",
-    borderColor: "rgba(129, 137, 255, 0.6)",
-    borderWidth: 1,
-    borderRadius: 9,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    zIndex: 20,
-  },
-  nativeDebugText: {
-    color: "#d6ddff",
-    fontSize: 10,
-    fontWeight: "700",
-  },
 
   analysisBackdrop: {
     flex: 1,
